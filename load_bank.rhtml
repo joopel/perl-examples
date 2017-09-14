@@ -1,0 +1,90 @@
+<?
+
+use View;
+use JSON;
+use Basic;
+use Bin;
+
+$HEAP{'view'}=new View('heap'=>\%HEAP);
+
+my %err = ();
+my %info = ();
+my %inner_error = ();
+
+my $city_url = $POST{'city'};
+ 
+$info{'action'} = 'load_bank';
+$info{'rq_counter'} = $POST{'rq_counter'};
+
+{
+  $inner_error{'msg'} = 'Undefine city_url', last unless $city_url;
+  	
+	my $city = $HEAP{'view'}->obj('City')->item('url' => $city_url, 'is_hidden'=>0);
+
+	$inner_error{'msg'} = 'Undefine $city or $city not hashref', last unless $city && %$city;
+ 
+  my $bank_filter_list = $HEAP{'view'}->obj('Bank')->list(
+    'city_uid'	=> $city->{'uid'},
+		'is_hidden'	=> 0,
+		'order'		=> 'title',
+		'no_select'	=> 'file_ab'
+  );	    	
+		
+	my $t = <<'  _EOL_';
+						<div class="halfBox">
+							<div class="checkBox">
+							%s
+							</div>
+						</div>
+  _EOL_
+
+	my $t1 = <<'  _EOL_';
+							<div>
+								<input type="checkbox" name="popup_bank_%1$u" id="popup_bank_%1$u" value="%1$u" />
+								<label for="popup_bank_%1$u">
+									<span class="checkboxText">%2$s</span>
+								</label>
+							</div>
+  _EOL_
+
+  # Расположение массива в заданное кол-во колонок и строк
+  # если $total больше или равно $max_total  то  $max_cols колонок по $total / $max_cols + остаток в последнией
+  # если меньше то $max_cols по $rows в каждой
+
+  my $total  = scalar @$bank_filter_list;
+  my $max_cols = 3; # В данном случае, если элементов больше или равно 45, то мы их распологаем в 3 колонки,
+  my $rows = 15;    # в противном случае, мы распологаем по 15 элементов в колонку и колонок может быть меньше.
+  my $max_total = $max_cols*$rows;
+  my $cur_cols = Basic::ceil($total / $rows);
+
+  $max_cols = $cur_cols if($max_total >= $total);
+  $rows = Basic::ceil($total / $max_cols);
+
+  my @t = ();
+    
+  for(my $i = 0; $i < $max_cols; $i++)
+  {
+    my @ar =();
+
+    for (my $j = 0;$j < $rows;$j++)
+    {
+      last unless @$bank_filter_list;
+
+      my $hr = shift @$bank_filter_list;
+
+      push @ar, sprintf(
+        $t1,
+        $hr->{'uid'},
+        $hr->{'title'}
+      );
+    }
+    push @t, sprintf($t, join('', @ar));
+  }  
+  $info{'data'} = join '', @t;
+  $info{'half_box_width'} = int 100/$max_cols;
+}
+$HTTP_HEADERS_OUT{'Content-Type'}='text/plain; charset=utf-8';
+print JSON::response(\%err,\%info);
+return 1;
+
+?>

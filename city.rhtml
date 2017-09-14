@@ -1,0 +1,37 @@
+<? 
+# Добавление комментариев к пользователям
+do 'init.pl' or return 0;
+
+use View;
+use JSON;
+use utf8;
+use Basic;
+use Ru;
+
+my $view=new View('heap'=>\%HEAP);
+my $model=$view->base_model();
+
+
+
+my %arg = (
+	'all'	=> 1,
+	'is_hidden'	=> 0,
+	'query' => $POST{'query'}
+);
+my $list;
+
+$list = $HEAP{'view'}->obj('City')->list(\%arg);
+
+return 0 unless (scalar @$list);
+
+print '[';
+my $counter=1;
+my @res;
+foreach my $hr (@$list)
+{
+	push @res, sprintf('{"name":"%s","href":"%s"}',$hr->{'title'},$hr->{'href'});
+	$counter++;
+}
+print join(',',@res);
+print ']';
+?>
