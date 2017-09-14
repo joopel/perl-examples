@@ -1,0 +1,516 @@
+#!/usr/bin/perl
+
+BEGIN
+{
+=pod
+	close(STDERR);
+	open(STDERR, '>&STDOUT');
+	binmode(STDIN);
+	binmode(STDOUT);
+	binmode(STDERR);
+	#close(STDERR);
+	#close(STDOUT);
+	$|=1;
+	print "Content-Type: text/plain; charset=windows-1251\n\n";
+	print "$_: $ENV{$_}\n" foreach (sort keys %ENV);
+=cut
+
+	unshift(@INC, $ENV{'DOCUMENT_ROOT'}.'/../lib/Perl5');
+
+	binmode(STDIN);
+	binmode(STDOUT);
+}
+
+use strict;
+use vars qw(%GLOBALS %API %HTTP_POST_VARS %HTTP_GET_VARS %HTTP_COOKIE_VARS %HTTP_POST_FILES %HTTP_HEADERS_OUT %HTTP_SESSION_VARS);
+use Tie::Hash;
+require Digest::MD5;
+
+##--
+
+
+foreach (keys %ENV)
+{
+	if (m/.+REMOTE_USER\z/)
+	{
+		$ENV{'REMOTE_USER'}=$ENV{$_};
+		last;
+	}
+}
+
+##--
+
+$ENV{'FILES_ROOT'} = join('', $ENV{'DOCUMENT_ROOT'}, '/f');
+$ENV{'HTINCL_ROOT'} = join('', $ENV{'DOCUMENT_ROOT'}, '/../htincl');
+$ENV{'VAR_ROOT'} = join('', $ENV{'DOCUMENT_ROOT'}, '/../var');
+$ENV{'ETC_ROOT'} = join('', $ENV{'DOCUMENT_ROOT'}, '/../.etc');
+$ENV{'TMP_ROOT'} = join('', $ENV{'DOCUMENT_ROOT'}, '/../tmp');
+$ENV{'SESSION_ROOT'} = sprintf('%s/session',$ENV{'VAR_ROOT'});
+$GLOBALS{'IS_AUTHORIZED'} = (exists $ENV{'REMOTE_USER'} && $ENV{'REMOTE_USER'} ne '' ? 1:0);
+
+##--
+
+if ($ENV{'HTTP_COOKIE'} ne '')
+{
+	parse_query(\%HTTP_COOKIE_VARS,\$ENV{'HTTP_COOKIE'},'; ','=');
+}
+
+##--
+
+{
+	my @wkday=('Mon', 'Tue', 'Wed','Thu', 'Fri', 'Sat', 'Sun');
+	my @month=('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec');
+
+	sub httptimef
+	{
+		my @tm_buff = gmtime($_[0]);
+
+		return sprintf('%s, %02d %s %04d %02d:%02d:%02d GMT'
+			,$wkday[$tm_buff[6]-1]
+			,$tm_buff[3]
+			,$month[$tm_buff[4]]
+			,$tm_buff[5]+1900
+			,$tm_buff[2]
+			,$tm_buff[1]
+			,$tm_buff[0]
+		);
+	}
+}
+
+sub rawurlencode  # RFC 2396
+{
+	local $_=shift;
+
+	s/([^ \w()'*~!.-])/sprintf('%%%02X', ord($1))/eg;
+	tr/ /+/;
+
+	return $_;
+}
+
+sub rawurldecode  # RFC 2396
+{
+	local $_=shift;
+
+	tr/+/ /;
+	s/%([A-Fa-f\d]{2})/chr(hex($1))/eg;
+
+	return $_;
+}
+
+sub parse_query
+{
+	my $p1;
+	my $p2 = -length($_[2]);
+	my $p3;
+	my $stop;
+
+	until ($stop)
+	{
+		$p1 = $p2+length($_[2]);
+		$p2 = index(${$_[1]},$_[2],$p1);
+
+		if ($p2==-1)
+		{
+			$stop = 1;
+			$p2 = length(${$_[1]});
+		}
+
+		next if $p1==$p2;
+
+		$p3 = index(${$_[1]},$_[3],$p1);
+
+		if ($p3==-1)
+		{
+			$stop = 1;
+			$p3 = length(${$_[1]});
+		}
+		if ($p3 > $p2)
+		{
+			$p3 = $p2;
+		}
+
+		my $k = substr(${$_[1]},$p1,$p3-$p1);
+		$k = rawurldecode($k);
+
+		next if ($k eq '' or $k eq '[]');
+
+		my $v = substr(${$_[1]},$p3+1,$p2-$p3-1) if $p2-$p3;
+		$v = rawurldecode($v);
+
+		$p3 = index($k,'[]',length($k)-2);
+
+		if ($p3!=-1)
+		{
+			push(@{${$_[0]}{substr($k,0,$p3)}},$v);
+		}
+		else
+		{
+			${$_[0]}{$k} = $v unless exists ${$_[0]}{$k};
+		}
+	}
+}
+
+
+##--
+
+my $allowed_http_cookie='';
+{
+	my %allowed=(
+		'order' => 1
+	);
+
+	my @a=();
+
+	foreach my $k (sort keys %HTTP_COOKIE_VARS)
+	{
+		push @a,join('=',rawurlencode($k),rawurlencode($HTTP_COOKIE_VARS{$k})) if $allowed{$k};
+	}
+
+	$allowed_http_cookie=join('; ',@a);
+}
+
+##--
+
+
+$ENV{'REQUEST_URI'}=rawurldecode($ENV{'REQUEST_URI'});
+
+unless (index($ENV{'REQUEST_URI'},$ENV{'SCRIPT_NAME'}))
+{
+	print "Status: 410\r\n";
+
+	die 'Unsupported request: ', $ENV{'REQUEST_METHOD'}, ' ', $ENV{'REQUEST_URI'};
+}
+
+
+##--
+
+
+
+my $session_filepath=undef;
+{
+	last unless $HTTP_COOKIE_VARS{'session_id'}=~m/\A[a-f0-9]{32}\d{10}\z/;
+
+	my $dir=sprintf('%s/%s',$ENV{'SESSION_ROOT'},substr($HTTP_COOKIE_VARS{'session_id'},0,2));
+
+	unless (-d $dir)
+	{
+		mkdir($dir,oct('0700')) or die "$!: $dir";
+		chmod(oct('2777'),$dir) or die "$!: $dir";
+	}
+
+	$session_filepath=sprintf('%s/%s.bin',$dir,$HTTP_COOKIE_VARS{'session_id'});
+}
+
+tie(%HTTP_SESSION_VARS, 'Tie::Hash', $session_filepath); # $session_filepath may have undef value
+
+
+##---
+
+my $cachefile_pathname;
+
+{
+	last unless ($ENV{'REQUEST_METHOD'} eq 'GET' or $ENV{'REQUEST_METHOD'} eq 'HEAD');
+	last if exists $ENV{'REMOTE_USER'};
+	last if exists $HTTP_SESSION_VARS{'REMOTE_USER'};
+	last if exists $HTTP_SESSION_VARS{'auth_data'};
+
+	$cachefile_pathname = join(''
+		,$ENV{'TMP_ROOT'}, '/cache', $ENV{'PATH_INFO'}
+		,'#', Digest::MD5::md5_hex($ENV{'QUERY_STRING'})
+		,'#', Digest::MD5::md5_hex($allowed_http_cookie)
+	);
+
+	$GLOBALS{'cachefile_pathname'}=$cachefile_pathname;
+	#	,'#', $ENV{'REMOTE_USER'}
+	#	,'#', Digest::MD5::md5_hex($ENV{'QUERY_STRING'})
+}
+
+
+##--
+
+
+{
+	last unless defined $cachefile_pathname;
+
+
+	last unless -f $cachefile_pathname;
+
+	my($cache_etime,$cache_lmtime)=(stat(_))[9,10];
+
+	last if time() > $cache_etime;  # cache expired
+
+
+	last unless -f $ENV{'PATH_TRANSLATED'};
+
+	last if (stat(_))[9] > $cache_lmtime;  # source updated
+
+
+
+	unless (index($ENV{'HTTP_IF_MODIFIED_SINCE'}, httptimef($cache_lmtime)))
+	{
+		print 'Status: 304', "\r\n" x 2;
+
+		exit;
+	}
+
+
+	local *FH;
+
+	last unless open(FH, $cachefile_pathname);
+
+
+	my $max_age += readline(*FH);
+
+
+	binmode(FH);
+
+	print
+		'X-Cache-Enable: true', "\r\n",
+		'Expires: ', $max_age > 0 ? httptimef($max_age + time()) : httptimef(0), "\r\n",
+		<FH>;
+
+
+	close(FH);
+
+
+	exit;
+}
+
+
+unlink($cachefile_pathname) if defined $cachefile_pathname;
+
+
+##--
+
+
+my $code;
+read(DATA,$code,8192);
+close(DATA);
+
+
+eval $code;
+die $@ if $@;
+
+
+exit;
+
+
+__DATA__
+
+
+my @cookie;
+
+# set_cookie, raw_cookie (bool cachable, string name [, string value [, int expire [, string path [, string domain [, bool secure]]]]])
+sub set_cookie
+{
+	@_ > 1 ? push(@cookie, [@_]) : undef;
+}
+
+# unset_cookie (string name [, string path [, string domain]])
+sub unset_cookie
+{
+	#TODO
+}
+
+sub raw_cookie
+{
+	@_ > 1 or return;
+
+	join(''
+		,rawurlencode($_[1]), '='
+		,defined $_[2] && rawurlencode($_[2])
+		,defined $_[3] && ('; expires=', httptimef($_[3]))
+		,defined $_[4] && ('; path=', $_[4])
+		,defined $_[5] && ('; domain=', $_[5])
+		,$_[6] ? '; secure' : ''
+	);
+}
+
+
+##--
+
+
+# Way to access variables
+%API = (
+	# variables passed to the current script via the HTTP POST method
+	 'HTTP_POST_VARS'=>\%HTTP_POST_VARS
+
+	# variables passed to the current script via the HTTP GET/HEAD method
+	,'HTTP_GET_VARS'=>\%HTTP_GET_VARS
+
+	# variables passed to the current script via HTTP cookies
+	,'HTTP_COOKIE_VARS'=>\%HTTP_COOKIE_VARS
+
+	# variables containing information about files uploaded via the HTTP POST method
+	,'HTTP_POST_FILES'=>\%HTTP_POST_FILES
+
+	# variables passed to the current script via the parent environment
+	,'HTTP_ENV_VARS'=>\%::ENV
+
+	# MIME headers to be sent back with the response
+	,'HTTP_HEADERS_OUT'=>\%HTTP_HEADERS_OUT
+);
+
+
+$API{'last_modified'}=time();
+$API{'max_age'}=0;
+$API{'refresh_interval'}=0;
+
+
+##--
+
+
+if ($ENV{'QUERY_STRING'} ne '')
+{
+	parse_query(\%HTTP_GET_VARS,\$ENV{'QUERY_STRING'},'&','=');
+}
+
+
+if ($ENV{'REQUEST_METHOD'} eq 'POST')
+{
+	if ($ENV{'CONTENT_TYPE'} eq '' or index($ENV{'CONTENT_TYPE'},'application/x-www-form-urlencoded')==0)
+	{
+		if ($ENV{'CONTENT_LENGTH'} > 0)
+		{
+			my $s;
+
+			if ($ENV{'CONTENT_LENGTH'} == read(STDIN, $s, $ENV{'CONTENT_LENGTH'}))
+			{
+				parse_query(\%HTTP_POST_VARS,\$s,'&','=');
+			}
+		}
+	}
+	elsif (index($ENV{'CONTENT_TYPE'},'multipart/form-data;')==0)
+	{
+		require('rfc1867b.pl');
+	}
+}
+
+
+##--
+
+
+#use Time::HiRes qw(gettimeofday);
+#my $t0 = gettimeofday;
+
+
+require Tie::FileHandle;
+
+
+my $out_buf;
+
+tie(*STDOUT, 'Tie::FileHandle', \$out_buf);
+
+
+require 'default_handler.pl';
+
+
+untie(*STDOUT);
+
+
+#$out_buf .= sprintf("Execution time: %s\n",gettimeofday()-$t0);
+
+
+##--
+
+my $session=tied(%HTTP_SESSION_VARS);
+
+if ($session->{'UPDATED'} && not $session_filepath)
+{
+	if (rand(50) < 1)
+	{
+		my $filter=sub { return ((-f shift && ((-z _ && -A _ >= 1) || (-s _ && -A _ >= 90))) ? 1:0); };
+		Cache::garbage_collect($ENV{'SESSION_ROOT'},$filter);
+	}
+
+	my $dir=undef;
+
+	{
+		$HTTP_COOKIE_VARS{'session_id'}=lc(Digest::MD5::md5_hex(rand().rand().rand().rand())).time();
+		$dir=sprintf('%s/%s',$ENV{'SESSION_ROOT'},substr($HTTP_COOKIE_VARS{'session_id'},0,2));
+		$session_filepath=sprintf('%s/%s.bin',$dir,$HTTP_COOKIE_VARS{'session_id'});
+		redo if -e $session_filepath;
+	}
+
+	unless (-d $dir)
+	{
+		mkdir($dir,oct('0700')) or die "$!: $dir";
+		chmod(oct('2777'),$dir) or die "$!: $dir";
+	}
+
+	#maybe create empty file?
+
+	$session->{'FILENAME'}=$session_filepath;
+
+	my $server_name=$ENV{'SERVER_NAME'}=~m/\.gazeta\.spb\.ru\z/ ? '.gazeta.spb.ru' : $ENV{'SERVER_NAME'}; # test server name
+
+	set_cookie(0, 'session_id', $HTTP_COOKIE_VARS{'session_id'}, time()+5*365*24*60*60, '/', $server_name);
+	set_cookie(0, 'session_id', $HTTP_COOKIE_VARS{'session_id'}, time()+5*365*24*60*60, '/', 'imho'.$server_name);
+}
+
+untie(%HTTP_SESSION_VARS);
+
+
+##--
+
+
+my $h = $API{'HTTP_HEADERS_OUT'};
+
+
+if ($API{'max_age'} > 0)
+{
+	$h->{'Cache-Control'}=sprintf('max-age=%s, must-revalidate', $API{'max_age'});
+}
+else
+{
+	$h->{'Pragma'}='no-cache';
+	$h->{'Cache-Control'}='no-cache';
+}
+
+
+$h->{'Last-Modified'}=httptimef($API{'last_modified'});
+
+
+$h->{'Content-Length'}=length($out_buf);
+
+
+delete($h->{'Status'}) if $h->{'Status'}==200;
+
+
+print 'Expires: ', ($API{'max_age'} > 0 ? httptimef($API{'max_age'} + $API{'last_modified'}) : httptimef(0)), "\r\n"
+	,( map { ( 'Set-Cookie: ', raw_cookie(@$_), "\r\n" ) } @cookie )
+	,( map { $_, ': ', $h->{$_}, "\r\n" } keys %{ $h } ), "\r\n"
+	,( $ENV{'REQUEST_METHOD'} ne 'HEAD' && $out_buf );
+
+##--
+
+
+{
+	last unless defined $cachefile_pathname;
+
+
+	last if $API{'refresh_interval'} < 1;
+
+
+	local *FH;
+
+	last unless open(FH, '>'.$cachefile_pathname);
+
+	binmode(FH);
+
+
+	print FH $API{'max_age'}, "\r\n"
+		,( map { $_->[0] ? ( 'Set-Cookie: ', raw_cookie(@$_), "\r\n" ) : '' } @cookie )
+		,( map { $_, ': ', $h->{$_}, "\r\n" } keys %{ $h } ), "\r\n"
+		,$out_buf;
+
+
+	last unless close(FH);
+
+
+	last unless chmod(0660, $cachefile_pathname);
+
+
+	utime($API{'last_modified'} + $API{'refresh_interval'}, $API{'last_modified'} + $API{'refresh_interval'}, $cachefile_pathname);
+}
+
