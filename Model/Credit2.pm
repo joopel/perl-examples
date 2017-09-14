@@ -19,8 +19,6 @@ $Data::Dumper::Useqq = 1;
 
 my $dbh=Model::dbh();
 my $rate_var_cache=undef; # Значения для переменных процентных ставок
-my $purpose_cache=undef; # Список всех возможных целей кредита
-my $purpose2_cache=undef; # Список всех возможных целей кредита
 
 sub list
 {
@@ -33,15 +31,15 @@ sub list
 	my $group;
 	my $rate_joined;
 	my $cache=new Cache();
-	
+
 	my $cache_key_str ='';
-	
+
 	{
 		last unless $arg->{'cache'};
 
 		local $Data::Dumper::Indent=0;
 		local $Data::Dumper::Purity=1;
-		
+
 		my @sort_arg;
 		push @sort_arg, $_, $arg->{$_} for sort { $a cmp $b } keys %$arg;
 
@@ -57,7 +55,7 @@ sub list
 
 		return $out;
 	}
-	 
+
 	if (exists $arg->{'parent_uid'})
 	{
 		push @where,sprintf('A.parent_uid=%u',$arg->{'parent_uid'});
@@ -66,52 +64,53 @@ sub list
 	{
 		push @where, sprintf('A.`parent_uid` IN(%s)',join(',' => map { sprintf('%u',$_) } @{$arg->{'parent_uid_list'}}));
 	}
-	
+
 	if (exists $arg->{'priority'})
 	{
 		push @where,sprintf('A.priority=%u',$arg->{'priority'});
 	}
-	
+
 	if (exists $arg->{'exclude_uid_list'} && ref($arg->{'exclude_uid_list'}) eq 'ARRAY' && @{$arg->{'exclude_uid_list'}})
 	{
 		push @where, sprintf('A.`uid` NOT IN(%s)',join(',' => map { sprintf('%u',$_) } @{$arg->{'exclude_uid_list'}}));
 	}
-	
+
 	if (exists $arg->{'is_hidden'})
 	{
 		push @where,sprintf('A.is_hidden=%u',$arg->{'is_hidden'});
 	}
-	
+
 	if(exists $arg->{'profile'})
 	{
 		push @where, sprintf('A.`profile`=%s', $dbh->quote($arg->{'profile'}));
 	}
-	
+
 	if (exists $arg->{'bank_uid'} && !exists $arg->{'city_uid'})
 	{
 		push @where,sprintf('A.bank_uid=%u',$arg->{'bank_uid'});
 	}
-	
+
 	if(exists $arg->{'uid_list'} && @{$arg->{'uid_list'}})
 	{
 		push @where,sprintf('A.`uid` IN(%s)', join(',' => map { int($_) } @{$arg->{'uid_list'}}));
 	}
 
- 
-	
+	if(exists $arg->{'purpose_id'})
+	{
+		push @from, sprintf('INNER JOIN Credit2_Purpose_Ref PR3 ON (A.uid=PR3.uid AND PR3.id=%u)',$arg->{'purpose_id'});
+	}
+
+
 	if(exists $arg->{'city_uid'})
 	{
-		my $bank_uids = ($arg->{'bank_uid'}) 
-			? [int $arg->{'bank_uid'}] 
+		my $bank_uids = ($arg->{'bank_uid'})
+			? [int $arg->{'bank_uid'}]
 			: $this->base_model()->obj('Bank')->bank_city_list('city_uid' => $arg->{'city_uid'});
 		return [] unless @$bank_uids;
-		
+
 		push @where,sprintf('A.bank_uid IN (%s)', join(',' => @$bank_uids));
 		# TODO нужно оптимизировать
 		push @from,sprintf('INNER JOIN Credit2_Rate AS D ON (A.uid=D.credit_uid AND D.city_uid IN (0,%u))',$arg->{'city_uid'});
-		
-#		push @select,'D.city_uid';
-		
 		$group++;
 		$rate_joined++;
 	}
@@ -125,56 +124,7 @@ sub list
 		$rate_joined++;
 		$group++;
 	}
-	
-	if(exists $arg->{'type'})
-	{
-		push @from,		'INNER JOIN `Credit2_Extra` AS E ON(A.`uid`=E.`credit_uid`)';
 
-		if ($arg->{'type'} eq 'bez-pervonachalnogo-vznosa')
-		{
-			push @where, 'E.`no_payment`=1';
-		}
-		elsif ($arg->{'type'} eq 'molodaya-semya')
-		{
-			push @where, 'E.`bride_family`=1';
-		}		
-		elsif ($arg->{'type'} eq 'voennaya')
-		{
-			push @where, 'E.`military`=1';
-		}				
-		elsif ($arg->{'type'} eq 'refinansirovanie')
-		{
-			push @where, 'E.`refinancing`=1';
-		}			
-		elsif ($arg->{'type'} eq 'na-dom')
-		{
-			push @where, 'E.`house`=1';
-		}			
-		elsif ($arg->{'type'} eq 'na-poderjannie')
-		{
-			push @where, 'E.`second_hand`=1';
-		}				
-		elsif ($arg->{'type'} eq 'bez-kasko')
-		{
-			push @where, 'E.`no_kasko`=1';
-		}			
-		elsif ($arg->{'type'} eq 'v-den-obrasheniya')
-		{
-			push @where, 'E.`in_day`=1';
-		}			
-		elsif ($arg->{'type'} eq 'lgotniy-period')
-		{
-			push @where, 'E.`privileged_period`=1';
-		}			
-		elsif ($arg->{'type'} eq 'bez-podtverjdeniya-dohoda')
-		{
-			push @where, 'E.`no_confirmation`=1';
-		}			
-
-		
-		
-	}
-	
 	if (exists $arg->{'limit'} && not $arg->{'no_calc_pagenav_rows'}) #подсчет кол-ва строк без лимита (для станичной навигации)
 	{
 		my $from=join(' ',@from);
@@ -201,21 +151,21 @@ sub list
 	if    ($arg->{'no_select'} eq 'file_ab') { 1; }
 	elsif ($arg->{'no_select'} eq 'file_b')  { push @select,'A.file_a'; }
 	else                                     { push @select,'A.file_a,A.file_b'; }
-	
+
 	my %addon = map { $_ => 1 } split(',' => $arg->{'addon'});
-	
+
 	if($addon{'length'})
 	{
 		push @select,'L.total, L.visible, L.new_visible';
 		push @from,'LEFT JOIN Length AS L ON (A.uid=L.uid)';
 	}
-	
+
 	if($addon{'bank'})
 	{
 		push @select,'B.title AS bank_title, B.`url` AS bank_url';
 		push @from,'LEFT JOIN Bank AS B ON (B.uid=A.bank_uid)';
 	}
-	
+
 	if($addon{'parent'})
 	{
 		push @select, 'P.`title` AS parent_title, P.`url` AS parent_url';
@@ -226,30 +176,30 @@ sub list
 	{
 		push @from, 'LEFT JOIN `Credit2_Purpose_Ref` PR ON(A.`uid`=PR.`uid`) LEFT JOIN `Credit2_Purpose_Lib` PL ON(PR.`id`=PL.`id`)';
 		push @select, 'GROUP_CONCAT(DISTINCT PL.`title`) AS purpose_text';
+
 		$group++;
 	}
 
 	if($addon{'purpose2'})
 	{
 		push @from, 'LEFT JOIN `Credit2_Purpose_Ref2` PR2 ON(A.`uid`=PR2.`uid`) LEFT JOIN `Credit2_Purpose_Lib2` PL2 ON(PR2.`id`=PL2.`id`)';
-#		push @where, 'PL2.id<99 OR PL2.id>542'; #убираем модели автомобилей
 		push @select, 'GROUP_CONCAT(DISTINCT PL2.`title`) AS purpose2_text';
 
 		$group++;
 	}
-	
+
 	my %order=(
 		'timestamp' =>	['A.timestamp DESC', 'A.timestamp ASC'],
 		'title'     =>	['A.title ASC',      'A.title DESC'],
 		'seq'       =>	['A.seq DESC',       'A.seq ASC'],
 		'rand'		=>  ['RAND()', 'RAND()'],
 		'parent_uid'=>	['A.priority DESC,A.parent_uid ASC,A.title ASC', 'A.priority DESC,A.parent_uid DESC,A.title ASC'],
-		'priority'=>	['A.priority DESC, rate1 ASC, A.title DESC', 'A.priority ASC, rate1 ASC, A.title DESC'],
+		'priority'=>	['A.priority DESC,A.title ASC', 'A.priority ASC,A.title DESC'],
 		'parent-title'=>['P.`title` ASC, A.`parent_uid` ASC, A.`title` ASC', 'P.`title` DESC, A.`parent_uid` DESC, A.`title` DESC']
 	);
 
 	my $direction=$arg->{'desc'} ? 1:0;
-	
+
 	my $select=@select ? join(',','',@select) : '';
 	my $from=join(' ',@from);
 	my $where=@where ? 'WHERE '.join(' AND ',@where) : '';
@@ -270,7 +220,7 @@ sub list
 	my $group_by = $group ? 'GROUP BY A.`uid`' : '';
 
 	my $query=sprintf(<<'	_QUERY_',$select,$this->{'profile'},$from,$where,$group_by,$order,$limit);
-	SELECT 
+	SELECT
 		A.uid,
 		A.parent_uid,
 		A.timestamp,
@@ -287,8 +237,8 @@ sub list
 		A.no_insurance_1,
 		A.no_insurance_2,
 		A.no_insurance_3,
-		A.period_from,		
-		A.period_to		
+		A.period_from,
+		A.period_to
 		%s
 	FROM
 		%s AS A
@@ -300,7 +250,7 @@ sub list
 	%s
 	_QUERY_
 
-	my @out=();	
+	my @out=();
 
 	my $credit=[];
 
@@ -341,7 +291,7 @@ sub list
 	}
 
 	if ($arg->{'cache'})
-	{ 
+	{
 		my $val_list = [\@out];
 		push @$val_list, $this->{'rows'} if defined $this->{'rows'};
 
@@ -358,8 +308,8 @@ sub credit_count
 
 	my %sql = ('select'=>'','group'=>'');
 	my @where =();
-		
-	if($arg->{'city_uid'})
+
+	if(exists $arg->{'city_uid'})
 	{
 		push @where,sprintf('city_uid=%u',$arg->{'city_uid'});
 	}
@@ -375,8 +325,8 @@ sub credit_count
 		$sql{'group'} = 'GROUP BY `type_uid`';
 	}
 
-  my $where=@where ? join(' AND ',@where) : '';
- 
+	my $where=@where ? join(' AND ',@where) : '';
+
 	my $q = sprintf(<<'	__Q__',$sql{'select'},$where,$sql{'group'});
 		SELECT
 			`type_uid`, %s
@@ -402,59 +352,31 @@ sub item
 	my $this=shift;
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
-	my @select=();
-	my @from=();
-	my @where=();
-	my $group;
-	
-	my %addon = map { $_ => 1 } split(',' => $arg->{'addon'});
-		
-	if    ($arg->{'uid'})       {	push @where,sprintf('A.uid=%u',$arg->{'uid'});	 }
-	
-	if ($arg->{'url'} ne '') { 	push @where,sprintf('A.url=%s',$this->{'dbh'}->quote($arg->{'url'})); }
+	my $select='';
+	my $from='';
+	my $where='';
+
+	if    ($arg->{'uid'})       { $where=sprintf('A.uid=%u',$arg->{'uid'}); }
+	elsif ($arg->{'url'} ne '') { $where=sprintf('A.url=%s',$this->{'dbh'}->quote($arg->{'url'})); }
 	else                        { return {}; }
 
-	push @where,sprintf('A.is_hidden=%u',$arg->{'is_hidden'}) if exists $arg->{'is_hidden'};
+	$where.=sprintf(' AND A.is_hidden=%u',$arg->{'is_hidden'}) if exists $arg->{'is_hidden'};
 
-	if($addon{'purpose'})
+	my %addon = map { $_ => 1 } split(',' => $arg->{'addon'}) if $arg->{'addon'};
+	if($addon{'profile'})
 	{
-		push @from, 'LEFT JOIN `Credit2_Purpose_Ref` PR ON(A.`uid`=PR.`uid`) LEFT JOIN `Credit2_Purpose_Lib` PL ON(PR.`id`=PL.`id`)';
-		
-		push @select, 'GROUP_CONCAT(DISTINCT PL.`title`) AS purpose_text';
-		$group++;
+		$from .= 'LEFT JOIN `Unite` U ON(A.`uid`=U.`uid`)';
+		$select .= ', U.`profile`';
 	}
 
-	if($addon{'purpose2'})
-	{
-		push @from, 'LEFT JOIN `Credit2_Purpose_Ref2` PR2 ON(A.`uid`=PR2.`uid`) LEFT JOIN `Credit2_Purpose_Lib2` PL2 ON(PR2.`id`=PL2.`id`)';
-#		push @where, 'PL2.id<99 OR PL2.id>542'; #убираем модели автомобилей
-		push @select, 'GROUP_CONCAT(DISTINCT PL2.`title`) AS purpose2_text';
-
-		$group++;
-	}	
-	
-	#Extra данные
-	{
-		push @from, 'LEFT JOIN `Credit2_Extra` AS E ON(A.`uid`=E.`credit_uid`)';
-		push @select, 'E.*';
-	}
-	
-	my $group_by = $group ? 'GROUP BY A.`uid`' : '';
-	
-	my $select=@select ? join(',','',@select) : '';
-	my $from=join(' ',@from);
-	my $where=@where ? 'WHERE '.join(' AND ',@where) : '';
-	
-	my $sth=$dbh->prepare(sprintf(<<'	_QUERY_',$select,$this->{'profile'},$from,$where,$group_by)) or die $dbh->errstr;
+	my $sth=$dbh->prepare(sprintf(<<'	_QUERY_',$select,$this->{'profile'},$from,$where)) or die $dbh->errstr;
 	SELECT
 		A.*
 		%s
 	FROM
 		%s AS A
 		%s
-		
-		%s
-		
+	WHERE
 		%s
 	LIMIT
 		1
@@ -473,21 +395,43 @@ sub item
 	$a{'uids'}=[ $hr->{'uid'} ];
 	$a{'city_uid'}=$arg->{'city_uid'} if exists $arg->{'city_uid'};
 	my $summary=$this->_summary(\%a) or die;
-	
+
 	# комиссии для кредитных карт
 	{
 		last if $hr->{'parent_uid'} != 7209 || scalar @{$a{'uids'}} != 1;
-		
-	  my $commission = [];
-	  my $commission=$this->_commission(\%a) or die;
 
-	  $hr->{'commission_credits_card'} = $commission;	  
-  }
-  
+		my $commission = [];
+		my $commission=$this->_commission(\%a) or die;
+
+		$hr->{'commission_credits_card'} = $commission;
+	}
+
 	# возможно фильтр по городу отбросил все возможные значения по этому кредиту. Не возвращаем такой кредит.
 
-	return {} unless exists $summary->{$hr->{'uid'}};
+	# 14.06.2014 — теперь возвращаем максимум данных. При пустом значении ставок выводим сообщение о том,
+	# что кредит не предоставляется в данном городе…
 
+	#return {} unless exists $summary->{$hr->{'uid'}};
+
+	# Если нет ставок или не указан конкретный город, — возвращаем список идентификаторов городов,
+	# для которых доступен данный кредит
+	if(!exists $summary->{$hr->{'uid'}} || !$arg->{'city_uid'})
+	{
+		# получаем идентификаторы городов, для которых доступны отдельные ставки
+		my %a = map { $_->[0] => 1 } @{$dbh->selectall_arrayref(
+			sprintf('SELECT DISTINCT `city_uid` FROM `Credit2_Rate` WHERE `credit_uid`=%u', $hr->{'uid'}),
+			{'Slice' => []}
+		)};
+
+		# Если есть набор ставок для всех городов — возвращаем список городов, в которых есть
+		# отделения данного банка
+		if(exists $a{'0'})
+		{
+			%a = map { $_ => (int($a{$_})+1) } (@{$this->base_model()->obj('Bank')->city_bank_list('bank_uid'=>$hr->{'bank_uid'})}, keys %a);
+		}
+
+		$hr->{'city_allow'} = \%a;
+	}
 
 	# доп. данные
 
@@ -497,6 +441,7 @@ sub item
 	delete $hr->{'file_b'};
 
 	$hr->{'summary'}=$summary->{$hr->{'uid'}};
+
 
 	# цель кредита
 
@@ -544,11 +489,10 @@ sub _summary
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
 	# выборка всех возможных вариантов ставок, сумм, сроков и т.п. по кредиту
-	
-	my $query=sprintf('SELECT * FROM `Credit2_Rate` WHERE `credit_uid` IN (%s)%s%s'
+
+	my $query=sprintf('SELECT * FROM `Credit2_Rate` WHERE `credit_uid` IN (%s)%s'
 		,join(',',map {sprintf('%u',$_)} @{$arg->{'uids'}})
 		,(exists $arg->{'city_uid'} ? sprintf(' AND `city_uid` IN (0,%u)',$arg->{'city_uid'}) : '')
-		,(exists $arg->{'currency'} ? sprintf(' AND `currency`=%u',$arg->{'currency'}) : '') #MY
 	);
 	#print $query,"<br>";
 
@@ -665,13 +609,13 @@ sub _commission
 	my %attr=(Slice=>{});
 	my $commission=$dbh->selectall_arrayref($query, \%attr);
 	die $dbh->errstr if $dbh->err;
-	
+
 	my $out = [];
 	foreach (@$commission)
 	{
-    push @$out, $_ if $_->{'percent'};         
+    push @$out, $_ if $_->{'percent'};
   }
-  
+
   return $out;
 }
 sub rate_var_value
@@ -693,12 +637,12 @@ sub get_bank_stat
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
 	return '' unless $arg->{'label'} && $arg->{'bank_uid'};
-	
+
 	my @where = (
 		sprintf('A.`bank_uid`=%u',$arg->{'bank_uid'})
 	);
 	push @where, sprintf('A.`city_uid`=%u', $arg->{'city_uid'}) if $arg->{'city_uid'};
-	
+
 	return sprintf(<<'	__Q__', $this->{'dbh'}->quote($arg->{'label'}), join('&&' => @where));
 		SELECT
 			%s as label,
@@ -717,30 +661,28 @@ sub purpose
 {
 	my $this=shift;
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
-	 
-	unless (defined $purpose_cache)
+
+	my %attr=(Slice=>{}, CacheMemExpire=>10, CacheFileExpire=>60*60, CacheTags=>['purpose']);
+	my $ar=$this->{'dbcache'}->selectall_arrayref('SELECT * FROM Credit2_Purpose_Lib ORDER BY title', \%attr);
+	die $this->{'dbcache'}->errstr if $this->{'dbcache'}->err;
+
+	my @out=();
+
+	if (exists $arg->{'profiles'} && ref $arg->{'profiles'} eq 'ARRAY') # если передан несколько профилей, передаем ссылкой на массив
 	{
-		my %attr=(Slice=>{});
-		$purpose_cache=$this->{'dbh'}->selectall_arrayref('SELECT * FROM Credit2_Purpose_Lib ORDER BY title', \%attr);
+		my %H = ();
+		$H{$_}++ foreach @{$arg->{'profiles'}};
+		@out = grep { exists $H{$_->{'profile'}} } @$ar;
+	}
+	elsif (exists $arg->{'profile'}) # если передан один профиль
+	{
+		@out=grep { $_->{'profile'} eq $arg->{'profile'} } @$ar;
+	}
+	else
+	{
+		@out=@$ar;
 	}
 
-	my @out=@$purpose_cache; # делаем копию, чтобы случайно не изменить кеш по ссылке
-
-  # если передан один профиль
-	if (exists $arg->{'profile'})
-	{  	
-		@out=grep { $_->{'profile'}} @out;
-	} 
-	
-  # если передан несколько профилей, передаем ссылкой на массив	
-	if (exists $arg->{'profiles'} && ref $arg->{'profiles'} eq 'ARRAY')
-	{  
-    my %H = ();
-    map { $H{$_} = 1 } @{$arg->{'profiles'}}; 
-       
-		@out = grep { $H{$_->{'profile'}} } @out;		
-	}  
-	
 	return \@out;
 }
 
@@ -750,31 +692,30 @@ sub purpose2
 	my $this=shift;
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
-	unless (defined $purpose2_cache)
+	my %attr=(Slice=>{}, CacheMemExpire=>10, CacheFileExpire=>60*60, CacheTags=>['purpose2']);
+	my $ar=$this->{'dbcache'}->selectall_arrayref('SELECT * FROM Credit2_Purpose_Lib2 ORDER BY title', \%attr);
+	die $this->{'dbcache'}->errstr if $this->{'dbcache'}->err;
+
+	my @out=();
+
+	if (exists $arg->{'profiles'} && ref $arg->{'profiles'} eq 'ARRAY') # если передан несколько профилей, передаем ссылкой на массив
 	{
-		my %attr=(Slice=>{});
-		$purpose2_cache=$this->{'dbh'}->selectall_arrayref('SELECT * FROM Credit2_Purpose_Lib2 ORDER BY title', \%attr);
+		my %H = ();
+		$H{$_}++ foreach @{$arg->{'profiles'}};
+		@out = grep { exists $H{$_->{'profile'}} } @$ar;
 	}
-
-	my @out=@$purpose2_cache; # делаем копию, чтобы случайно не изменить кеш по ссылке
-
-	if (exists $arg->{'profile'})
+	elsif (exists $arg->{'profile'}) # если передан один профиль
 	{
-		@out=grep { $_->{'profile'}} @out;
-	} 
-	
-	if (exists $arg->{'profiles'} && ref $arg->{'profiles'} eq 'ARRAY')
-	{  
-    my %H = ();
-    map { ref $_ ne 'HASH' ? $H{$_} = 1 : die 'Elements of @{$arg->{\'profiles\'}} must be string, not HASH' } @{$arg->{'profiles'}}; 
-       
-		@out = grep { $H{$_->{'profile'}} } @out;		
-	}  
+		@out=grep { $_->{'profile'} eq $arg->{'profile'} } @$ar;
+	}
+	else
+	{
+		@out=@$ar;
+	}
 
 	return \@out;
 }
 
-=pod
 # Параметры переданные из формы подбора кредитов приводятся к допустимым значениям.
 sub validate_request
 {
@@ -784,16 +725,12 @@ sub validate_request
 	my %out=();
 
 	# Тип кредита
-  my $type = $this->base_model->obj('Node')->list('uid_list' => $arg->{'type'},'parent_uid' => 2464);
+	my $type = $this->base_model->obj('Node')->list('uid_list' => $arg->{'type'},'parent_uid' => 2464);
 
 	die unless $type->[0]{'uid'};
 
 	$out{'type'} = [];
-   
-  map { push @{$out{'type'}},$_->{'uid'} } @$type;
-	
-
-
+	map { push @{$out{'type'}},$_->{'uid'} } @$type;
 
 	# Валюта
 	$out{'currency'}=$arg->{'currency'};
@@ -808,18 +745,34 @@ sub validate_request
 	$out{'period'}=$arg->{'period'};
 	$out{'period'}=12 unless $out{'period'}=~m/\A[0-9]\d*\z/;
 
+	# если первоначальный взнос передан в виде суммы — переводим значение в проценты
+	{
+		last unless $arg->{'initial_sum'};
+		$arg->{'initial_sum'}=~tr/0-9//cd;
+		last unless $arg->{'initial_sum'}=~m/\A[0-9]\d*\z/;
+
+		$arg->{'initial'} = int(
+			$arg->{'initial_sum'} / $out{'sum'} * 100
+		);
+
+		#use Data::Dumper;
+		#warn Dumper $arg->{'initial_sum'}, $arg->{'sum'}, $arg->{'initial'};
+	}
+
 	{
 		$out{'initial'}=$arg->{'initial'};
 		$out{'initial'}=~tr/,/./;
 		$out{'initial'}=int($out{'initial'} < 100 ? $out{'initial'}*1000/10 : $out{'initial'}); # т.к. проверка срабатывает до запаковки (когда значение еще дробное) и после (когда значение уже * 100)
 		$out{'initial'}=40_00 unless $out{'initial'}=~m/\A\d+\z/ && $out{'initial'} < 100_00;
+
+		#warn "OUTINITIAL:", $out{'initial'};
 	}
 
 		# доход подтвержден справкой
 		$out{'ndfl'}=$arg->{'ndfl'} ? 1 : 0; # в расширенном варианте появляется возможность выбора
-	
+
 		# фиксированная ставка
-		$out{'fix_rate'} = $arg->{'fix_rate'} ? 1 : 0; 
+		$out{'fix_rate'} = $arg->{'fix_rate'} ? 1 : 0;
 
 		# схема расчета
 		$out{'pricing_model'}=$arg->{'pricing_model'};
@@ -850,108 +803,7 @@ sub validate_request
 		}
 	return \%out;
 }
-=cut
 
-# Параметры переданные из формы подбора кредитов приводятся к допустимым значениям.
-sub validate_request
-{
-	my $this=shift;
-	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
-
-	my %out=();
-
-	# Тип кредита
-    my $type = $this->base_model->obj('Node')->list('uid_list' => $arg->{'type_credit'},'parent_uid' => 2464);
-
-	die unless $type->[0]{'uid'};
-
-	
-	$out{'type'} = [];
-   
-    map { push @{$out{'type'}},$_->{'uid'} } @$type;	
-	
-	# Валюта
-	$out{'currency'}=$arg->{'c'};
-	$out{'currency'}=0 unless $out{'currency'}=~m/\A[012]\z/;
-
-	# Размер кредита
-	$out{'sum'}=$arg->{'s'};
-	$out{'sum'}=~tr/0-9//cd;
-	unless ($out{'sum'}=~m/\A[0-9]\d+\z/)
-	{
-		if (ref $arg->{'type_credit'} eq 'ARRAY' && in_array(2465,$arg->{'type_credit'}))
-		{
-			$out{'sum'}=1_000_000;
-		}
-		elsif (ref $arg->{'type_credit'} eq 'ARRAY' && in_array(2478,$arg->{'type_credit'}))
-		{
-			$out{'sum'}=1_000_000;
-		}
-		else
-		{
-			$out{'sum'}=100_000;
-		}
-	}
-
-	# Срок кредита
-	$out{'period'}=$arg->{'srok'};
-	$out{'period'}=12 unless $out{'period'}=~m/\A[0-9]\d*\z/;
-	
-    if (ref $arg->{'type_credit'} eq 'ARRAY' && in_array(2465,$arg->{'type_credit'}))
-    {
-	  $out{'period'} = 5 unless $arg->{'srok'};
-      $out{'period'} = $out{'period'}*12;
-    }	
-
-	{
-		$out{'initial'}=$arg->{'p_v'};
-		$out{'initial'}=~tr/,/./;
-		$out{'initial'}=int($out{'initial'} < 100 ? $out{'initial'}*1000/10 : $out{'initial'}); # т.к. проверка срабатывает до запаковки (когда значение еще дробное) и после (когда значение уже * 100)
-		
-		$out{'initial'}=40_00 unless $out{'initial'}=~m/\A\d+\z/ && $out{'initial'} < 100_00;
-	}
-
-		# доход подтвержден справкой
-		$out{'ndfl'}=$arg->{'ndfl'} ? 1 : 0; # в расширенном варианте появляется возможность выбора
-	
-		# фиксированная ставка
-		$out{'fix_rate'} = $arg->{'f_s'} ? 1 : 0; 
-
-		# схема расчета
-		$out{'pricing_model'}=$arg->{'pricing_model'};
-		$out{'pricing_model'}=0 unless $out{'pricing_model'}=~m/\A[012]\z/;
-
-		# для граждан других стран
-		$out{'no_citizenship'}=$arg->{'ino'} ? 1 : 0;
-
-		# цель кредита
-		$out{'purpose'}=hex($arg->{'t'})-377;
-		$out{'purpose'}=0 unless $arg->{'t'};
-#		$out{'purpose'}=0 unless $out{'purpose'}=~m/\A\d+\z/;
-
-		# цель кредита №2
-		$out{'purpose2'}=hex($arg->{'t2'})-377;
-		$out{'purpose2'}=0 unless $arg->{'t2'};
-#		$out{'purpose2'}=0 unless $out{'purpose2'}=~m/\A\d+\z/;
-
-#		print $arg->{'i1'}.'zzzzz';
-		
-		# страхование
-		$out{'no_insurance_1'}=$arg->{'op'} ? 1 : 0;
-		$out{'no_insurance_2'}=$arg->{'io'} ? 1 : 0;
-		$out{'no_insurance_3'}=$arg->{'ui'} ? 1 : 0;
-
-		# банки
-#		if (exists $arg->{'bank'} && ref($arg->{'bank'}) eq 'ARRAY' && @{$arg->{'bank'}} && not(in_array(0,$arg->{'bank'})))
-#		{
-#			$out{'bank'}=[
-#				sort {$a<=>$b} map {sprintf('%u',$_)} @{$arg->{'bank'}}
-#			];
-#		}
-	return \%out;
-}
-
-=pod
 {
 	# Версия и формат запаковки.
 	# Предполагаю, со временем формат может измениться. Нужно обеспечить распаковку данных, и старого формата, и нового.
@@ -962,10 +814,10 @@ sub validate_request
 
     	# для сравнения кредитов
 		2 => [ 'type','currency','sum','period','initial','ndfl','pricing_model','no_citizenship','no_insurance_1','no_insurance_2','no_insurance_3' ],
-	
+
 		# для поиска кредита с фиксированной ставкой
-		3 => [ 'currency','sum','period','initial','ndfl','pricing_model','no_citizenship','no_insurance_1','no_insurance_2','no_insurance_3','purpose','purpose2','fix_rate','type','bank' ]  
-  );
+		3 => [ 'currency','sum','period','initial','ndfl','pricing_model','no_citizenship','no_insurance_1','no_insurance_2','no_insurance_3','purpose','purpose2','fix_rate','type','bank' ]
+	);
 
 	# Запаковывает параметры переданные из формы подбора кредитов в строку.
 	# Перед запаковкой используется метод validate_request.
@@ -975,10 +827,11 @@ sub validate_request
 	{
 		my $this=shift;
 		my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
-    if (ref $arg->{'value'}->{'type'} eq 'ARRAY' && in_array(2465,$arg->{'value'}->{'type'}))
-    {
-      $arg->{'value'}->{'period'} = $arg->{'value'}->{'period'}*12;
-    }
+
+		if (ref $arg->{'value'}->{'type'} eq 'ARRAY' && in_array(2465,$arg->{'value'}->{'type'}))
+		{
+			$arg->{'value'}->{'period'} = $arg->{'value'}->{'period'}*12;
+		}
 
 		my $val=$this->validate_request($arg->{'value'}) or die; # параметры переданные из формы подбора кредитов приводятся к допустимым значениям
 
@@ -1021,11 +874,10 @@ sub validate_request
 		$out{$key->[0]}=[ $out{$key->[0]} ] if ref($out{$key->[0]}) ne 'ARRAY' && $pack_format_version == 2; # последний элемент (банки) всегда массив
 		$out{$key->[-2]}=[ $out{$key->[-2]} ] if ref($out{$key->[-2]}) ne 'ARRAY' && $pack_format_version !=2; # предпоследний элемент (тип) всегда массив
 		$out{$key->[-1]}=[ $out{$key->[-1]} ] if ref($out{$key->[-1]}) ne 'ARRAY' && $pack_format_version !=2; # последний элемент (банки) всегда массив
-		     
+
 		return $this->validate_request(\%out) or die;
 	}
 }
-=cut
 
 sub rate_var_value
 {
@@ -1049,17 +901,14 @@ sub search
 {
 	my $this=shift;
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
- 
+
   $arg->{'parent_uid'} = $arg->{'type'} if ref $arg->{'type'} eq 'ARRAY' && @{$arg->{'type'}};
   $arg->{'bank'} = [] unless $arg->{'bank'};
-  
+
   $arg->{'sort'} ||= 0;
-  
-#  use Data::Dumper; 
-#  print '<pre>',Dumper(\$arg),'</pre>';  
-  
+
   die 'Incorrect $arg->{\'sort\'}' if $arg->{'sort'}%10 >= 3;
-  
+
 	die 'Undefined $arg->{parent_uid}' unless exists $arg->{'parent_uid'};
 	die 'Undefined $arg->{city_uid}' unless exists $arg->{'city_uid'};
 	die 'Undefined $arg->{ndfl}' unless exists $arg->{'ndfl'};
@@ -1123,32 +972,17 @@ sub search
 	$where.=sprintf(' AND A.pricing_model IN (0,%u)',$arg->{'pricing_model'}) if $arg->{'pricing_model'}; # 1 или 2 (аннуитетный или дифференцированный)
 	$where.=' AND A.is_citizenship_required=0' if $arg->{'no_citizenship'};
 
-	if(exists $arg->{'subtype'})
-	{
-		$where.=' AND E.no_payment=1' if ($arg->{'subtype'} eq 'bez-pervonachalnogo-vznosa');	
-		$where.=' AND E.bride_family=1' if ($arg->{'subtype'} eq 'molodaya-semya');	
-		$where.=' AND E.military=1' if ($arg->{'subtype'} eq 'voennaya');	
-		$where.=' AND E.refinancing=1' if ($arg->{'subtype'} eq 'refinansirovanie');	
-		$where.=' AND E.house=1' if ($arg->{'subtype'} eq 'na-dom');	
-		$where.=' AND E.second_hand=1' if ($arg->{'subtype'} eq 'na-poderjannie');			
-		$where.=' AND E.no_kasko=1' if ($arg->{'subtype'} eq 'bez-kasko');			
-		$where.=' AND E.in_day=1' if ($arg->{'subtype'} eq 'v-den-obrasheniya');			
-		$where.=' AND E.privileged_period=1' if ($arg->{'subtype'} eq 'lgotniy-period');					
-		$where.=' AND E.no_confirmation=1' if ($arg->{'subtype'} eq 'bez-podtverjdeniya-dohoda');
-	}
-	
 	my $query=sprintf(<<'	_QUERY_',$this->{'profile'},$arg->{'currency'},$arg->{'city_uid'},$arg->{'sum'},$arg->{'sum'},$arg->{'period'},$arg->{'period'},$where);
 	SELECT
 		R.*
 	FROM
 		%s AS A
 		INNER JOIN Credit2_Rate AS R ON (A.uid=R.credit_uid)
-		INNER JOIN Credit2_Extra AS E ON(A.uid=E.credit_uid)		
 	WHERE
 		R.currency=%u
 		AND R.city_uid IN (0,%u)
 		AND R.credit_from<=%u AND (R.credit_to>%u OR R.credit_to=0)
-		AND R.time_from<=%u AND (R.time_to>=%u ) #OR R.time_to=0 !!!СПОРНО!!!
+		AND R.time_from<=%u AND (R.time_to>=%u OR R.time_to=0)
 		%s
 	ORDER BY
 		R.seq
@@ -1300,7 +1134,7 @@ sub search
 			push @{$by_credit_uid{$credit_uid}->{'var'}},{
 				'data'=>$ar,
 				'min_rate'=>$min_rate,
-				'max_rate'=>$max_rate   
+				'max_rate'=>$max_rate
 			};
 		}
 	}
@@ -1338,15 +1172,12 @@ sub search
 		B.url AS bank_url,
 		B.file_a AS bank_file_a,
 		R.rating,
-		C.rating AS bank_city_rating,
-		PP.`title` AS parent_title,
-		PP.`url` AS parent_url		
+		C.rating AS bank_city_rating
 	FROM
 		%s AS A
 		LEFT JOIN Bank AS B ON (A.bank_uid=B.uid)
 		LEFT JOIN Bank_Rating AS R ON (R.bank_uid=B.uid)
 		LEFT JOIN Bank_City_Rating AS C ON (C.bank_uid=B.uid AND C.city_uid=%s)
-		LEFT JOIN `Unite` AS PP ON (A.`parent_uid`=PP.`uid`)		
 		%s
 	WHERE
 		A.uid IN (%s)
@@ -1362,9 +1193,10 @@ sub search
 		Bin::unpackhash(\$hr->{'file_b'}, $hr);
 		delete($hr->{'file_a'});
 		delete($hr->{'file_b'});
-		
+
 		Bin::unpackhash(\$hr->{'bank_file_a'}, $hr);
 		delete($hr->{'bank_file_a'});
+
 
 		my %calc_arg=( # аргументы для функции расчета графика платежей
 			'сумма'=>$arg->{'sum'},
@@ -1388,7 +1220,7 @@ sub search
 			}
 
 			# расчет графика платежей
-			
+
 			my $calc=($hr->{'pricing_model'}==2)
 				? _differentiated_payment(\%calc_arg) # дифференцированный платеж
 				: _annuity_payment(\%calc_arg);  # Аннуитетный платеж или Любой
@@ -1416,11 +1248,11 @@ sub search
 	}
 
 	# Комиссии банка
-	my %commission_by_credit_uid=();	
-  {  
+	my %commission_by_credit_uid=();
+  {
     # для кредитных карт мы не считаем коммисию
     map {last if $_ == 7209} @{$arg->{'parent_uid'}};
-    
+
 	  my $query=sprintf(<<'		_QUERY_',$uidlist,$arg->{'currency'},$arg->{'city_uid'},$arg->{'sum'},$arg->{'initial'},$arg->{'period'});
   	SELECT
   		*
@@ -1474,7 +1306,7 @@ sub search
 
 		  # считаем сумму всех комиссий банка (разовых и ежемесячных)
 		  my $sum=0;
- 
+
 		  foreach my $hr (@filtered)
 		  {
 			  my $payment=$hr->{'amount'}; # размер платежа
@@ -1487,7 +1319,7 @@ sub search
 			  }
 
 			  unless ($payment) # неверно указан размер комиссии
-			  {   
+			  {
 				  local $Data::Dumper::Indent=0;
 				  local $Data::Dumper::Purity=1;
 				  local $Data::Dumper::Useqq = 1;
@@ -1500,7 +1332,7 @@ sub search
 
 				  die "Comission payment = 0; credit_uid=$credit_uid; ",Dumper($hr);
 			  }
-			  
+
 			  if ($hr->{'periodicity'}==0) # разовый платеж
 			  {
 				  $sum+=$payment;
@@ -1517,8 +1349,8 @@ sub search
 	# добавляем комиссию к данным кредита
 	foreach my $hr (@$credit)
 	{
-#	  $hr->{'overpayment'}+=$commission_by_credit_uid{$hr->{'uid'}}; #MY - УБРАЛ КОМИССИИ, считаются как-то криво!!!
-	  $hr->{'commission'}=$commission_by_credit_uid{$hr->{'uid'}};  
+	  $hr->{'overpayment'}+=$commission_by_credit_uid{$hr->{'uid'}};
+	  $hr->{'commission'}=$commission_by_credit_uid{$hr->{'uid'}};
 	}
 
 =pod
@@ -1535,42 +1367,40 @@ sub search
 	}
 =cut
 
-  # сортировочка: 
-  # параметр $arg->{'sort'} - десятичное число, где: 
-  # первый разряд - параметр сортировки, значения 0 - переплата,1 - рейтинг банка,2 - ставка
-  # второй разряд - порядок сортировки, значения 0 - возрастанию и 1 - убыванию
-  $arg->{'order'} = join('',split('-',$arg->{'order'}))+0;
-  
-  my $credit_order = 1 if ($arg->{'order'} >= 10);
+	# сортировочка:
+	# параметр $arg->{'sort'} - десятичное число, где:
+	# первый разряд - параметр сортировки, значения 0 - переплата,1 - рейтинг банка,2 - ставка
+	# второй разряд - порядок сортировки, значения 0 - возрастанию и 1 - убыванию
+	my $credit_order = 1 if ($arg->{'sort'} >= 10);
 
-  my @rv=();
+	my @rv=();
+	if (in_array(7209, $arg->{'parent_uid'}))
+	{
+		if ($arg->{'sort'}%10 == 1)
+		{
+			@rv = _sort('for_sort' => \@$credit,'type' => 'rating','order' => $credit_order);
+		}
+		else
+		{
+			@rv = _sort('for_sort' => \@$credit,'type' => 'min_rate','order' => $credit_order);
+		}
+	}
+	else
+	{
+		if ($arg->{'sort'}%10 == 1)
+		{
+			@rv = _sort('for_sort' => \@$credit,'type' => 'rating','order' => $credit_order);
+		}
+		elsif ($arg->{'sort'}%10 == 2)
+		{
+			@rv = _sort('for_sort' => \@$credit,'type' => 'min_rate','order' => $credit_order);
+		}
+		else
+		{
+			@rv = _sort('for_sort' => \@$credit,'type' => 'overpayment','order' => $credit_order);
+		}
+	}
 
-  if (in_array(7209, $arg->{'parent_uid'}))
-  {
-    if ($arg->{'order'}%10 == 1)
-    {
-      @rv = _sort('for_sort' => \@$credit,'type' => 'bank_city_rating','order' => $credit_order);
-    }
-    else
-    {                                                   
-      @rv = _sort('for_sort' => \@$credit,'type' => 'min_rate','order' => $credit_order);
-    }  
-  }
-  else
-  {
-    if ($arg->{'order'}%10 == 1)
-    {
-      @rv = _sort('for_sort' => \@$credit,'type' => 'bank_city_rating','order' => $credit_order);
-    }
-    elsif ($arg->{'order'}%10 == 2)
-    {                                                   
-      @rv = _sort('for_sort' => \@$credit,'type' => 'min_rate','order' => $credit_order);
-    }
-    else
-    {
-      @rv = _sort('for_sort' => \@$credit,'type' => 'overpayment','order' => $credit_order);
-    }
-  }
 
 	$this->{'rows'}=scalar(@rv); # общее кол-во найденных кредитов (для постраничной навигации)
 
@@ -1612,7 +1442,7 @@ sub search
 		WHERE
 			R.uid IN (%s)
 		ORDER BY
-			L.title DESC
+			L.title
 		_EOL_
 
 		my %attr=(Slice=>{});
@@ -1632,7 +1462,7 @@ sub search
 		WHERE
 			R.uid IN (%s)
 		ORDER BY
-			L.title DESC
+			L.title
 		_EOL_
 
 		my %attr=(Slice=>{});
@@ -1644,23 +1474,22 @@ sub search
 
 		foreach my $hr (@$page)
 		{
-			$hr->{'purpose_text'}=exists $purpose1_by_uid{$hr->{'uid'}} ? join(', ',@{$purpose1_by_uid{$hr->{'uid'}}}) : '';
-			$hr->{'purpose2_text'}=exists $purpose2_by_uid{$hr->{'uid'}} ? join(', ',@{$purpose2_by_uid{$hr->{'uid'}}}) : '';
+			$hr->{'purpose1str'}=exists $purpose1_by_uid{$hr->{'uid'}} ? join(', ',@{$purpose1_by_uid{$hr->{'uid'}}}) : '';
+			$hr->{'purpose2str'}=exists $purpose2_by_uid{$hr->{'uid'}} ? join(', ',@{$purpose2_by_uid{$hr->{'uid'}}}) : '';
 		}
-	} 
+	}
 
-  {	  
-	  # Формирует сводные данные для кредитов 
+  {
+	  # Формирует сводные данные для кредитов
 		foreach my $hr (@$page)
     {
 	    my %a=();
 	    $a{'uids'}=[ $hr->{'uid'} ];
 	    $a{'city_uid'}=$arg->{'city_uid'} if exists $arg->{'city_uid'};
-	    $a{'currency'}=$arg->{'currency'} if exists $arg->{'currency'}; #MY		
 	    my $summary=$this->_summary(\%a) or die;
-      $hr->{'summary'} = $summary->{$hr->{'uid'}};           
-    }			
-  } 
+      $hr->{'summary'} = $summary->{$hr->{'uid'}};
+    }
+  }
 
 	return $page;
 }
@@ -1813,30 +1642,30 @@ sub _annuity_payment # Аннуитетный платеж
 	return \%return;
 }
 
-# сортировка кредитов, параметры: 
-# $arg->{'for_sort'} - ссылка на массив для сортировки, 
-# $arg->{'type'} - параметр по которому сортировать, 
+# сортировка кредитов, параметры:
+# $arg->{'for_sort'} - ссылка на массив для сортировки,
+# $arg->{'type'} - параметр по которому сортировать,
 # $arg->{'order'} - порядок (необязателен), если не равен 0,'',undef, то по убыванию
 sub _sort
 {
   my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
-  
+
   die 'Undefined or incorrect $arg->{\'for_sort\'}' unless $arg->{'for_sort'} && ref $arg->{'for_sort'} eq 'ARRAY';
   die 'Undefined $arg->{\'type\'}' unless $arg->{'type'};
-  
+
   $arg->{'order'} ||= 0;
-  
+
   my @sorted=();
-  
-  if ($arg->{'order'}) 
+
+  if ($arg->{'order'})
   {
-    return @sorted=sort { $b->{ $arg->{'type'} } <=> $a->{ $arg->{'type'} } } @{$arg->{'for_sort'}}; 
+    return @sorted=sort { $b->{ $arg->{'type'} } <=> $a->{ $arg->{'type'} } } @{$arg->{'for_sort'}};
   }
   else
   {
     return @sorted=sort { $a->{ $arg->{'type'} } <=> $b->{ $arg->{'type'} } } @{$arg->{'for_sort'}};
   }
-  die 'Incorrect sort' unless @sorted;  	 
+  die 'Incorrect sort' unless @sorted;
 }
 
 # добавляет кредит к сравнению
@@ -1904,14 +1733,14 @@ sub compare_list
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
 	return [] unless $arg->{'compare_id'};
-	
+
   my $limit = '';
   $limit = sprintf 'LIMIT %u',$arg->{'limit'} if $arg->{'limit'};
 
 	my @result = ();
 
 	my $sth = $dbh->prepare(sprintf('SELECT `credit_uid` From `Compare_Credit` WHERE `compare_id`=? %s',$limit)) or die $dbh->errstr;
-	$sth->execute($arg->{'compare_id'}) or die $dbh->errstr; 
+	$sth->execute($arg->{'compare_id'}) or die $dbh->errstr;
 	while (my $i=$sth->fetch)
 	{
 		push(@result,$i->[0]);
@@ -1970,25 +1799,25 @@ sub compare
   my $city_uid = $arg->{'city_uid'};
 
 	my @out=();
-	
-	my %by_param = %{$arg->{'param_by_type'}}; 
-   	
+
+	my %by_param = %{$arg->{'param_by_type'}};
+
   # кредиты
 	foreach my $pack (keys %by_param)
-	{ 
+	{
 		my $arg=$this->unpack_request('pack'=>$pack) or die;
 
 		$arg->{'compare_uid_list'}=$by_param{$pack}; # массив uid кредитов
-		$arg->{'city_uid'}=$city_uid; 
-		
+		$arg->{'city_uid'}=$city_uid;
+
 		$arg->{'is_hidden'}=0;
 
-		my $credit_search_list=$this->search($arg) or die; 
+		my $credit_search_list=$this->search($arg) or die;
 
 		push @out,@$credit_search_list;
 	}
-	
-	return \@out; 
+
+	return \@out;
 }
 sub compare_by_type
 {
@@ -2002,30 +1831,30 @@ sub compare_by_type
 	my $compare=$dbh->selectall_arrayref(sprintf('SELECT credit_uid,param FROM Compare_Credit WHERE compare_id=%u',$arg->{'compare_id'}), \%attr);
 
 	# группируем по одинаковым параметрам (для оптимизации SQL запросов)
-	
+
   my %credit_types = %{$arg->{'credit_types'}};
-	my %credit_by_param;  
-	
+	my %credit_by_param;
+
   my %offer_types = %{$arg->{'offer_types'}};
   my %offer_by_param;
-  
+
   my %deposit_by_param;
 
-  
+
   my $out = {
    'Credit2' => {}
   ,'Offer'   => {}
   ,'Deposit' => {}
-  }; 
-  
+  };
+
 	foreach my $hr (@$compare)
 	{
     my @a = split(/-/,$hr->{'param'},2);
-    
-    
+
+
     if ($offer_types{hex($a[1])})
     {
-		  push @{$offer_by_param{$hr->{'param'}}}, $hr->{'credit_uid'}; 
+		  push @{$offer_by_param{$hr->{'param'}}}, $hr->{'credit_uid'};
     }
     elsif($credit_types{hex($a[1])} || index($a[1],'.') != -1)
     {
@@ -2034,14 +1863,14 @@ sub compare_by_type
     else
     {
 		  push @{$deposit_by_param{$hr->{'param'}}}, $hr->{'credit_uid'};
-    } 	
-	}  
-	
+    }
+	}
+
 	$out->{'Credit2'} = \%credit_by_param;
 	$out->{'Offer'} = \%offer_by_param;
 	$out->{'Deposit'} = \%deposit_by_param;
 
-  return $out; 
+  return $out;
 }
 
 
@@ -2074,15 +1903,15 @@ sub bank_credit_parent_list
 	my $this = shift;
 	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
 
-	return [] unless $arg->{'bank_uid'} && $arg->{'city_uid'};
+	return [] unless $arg->{'bank_uid'};
 
-  my @where;
-  if(ref $arg->{'allow_uids'} eq 'ARRAY' && @{$arg->{'allow_uids'}})
-  {
-    push @where,sprintf('A.uid IN (%s)',join(',',@{$arg->{'allow_uids'}}));  
-  } 
-  my $where = @where ? sprintf(' && %s',join(' && ',@where)) : '';
-  
+	my @where;
+	if(ref $arg->{'allow_uids'} eq 'ARRAY' && @{$arg->{'allow_uids'}})
+	{
+		push @where,sprintf('A.uid IN (%s)',join(',',@{$arg->{'allow_uids'}}));
+	}
+	my $where = @where ? sprintf(' && %s',join(' && ',@where)) : '';
+
 	my %attr=(Slice=>{});
 	my $ar = $dbh->selectall_arrayref(sprintf(<<'	__Q__', $arg->{'bank_uid'}, $arg->{'city_uid'},$where),\%attr) or die $dbh->errstr;
 		SELECT
@@ -2090,14 +1919,13 @@ sub bank_credit_parent_list
 		FROM
 			`Node` A
 			INNER JOIN `Credit2_Count` C ON(A.`uid`=C.`type_uid`)
-			INNER JOIN `Unite` U ON (A.`uid`=U.`uid`)
 		WHERE
 			A.`is_hidden`=0
 			&& C.`bank_uid`=%u
 			&& C.`city_uid`=%u
 			&& C.`cnt`>0
 			%s
-		ORDER BY U.`seq` ASC
+		ORDER BY A.`title` ASC
 	__Q__
 	die $dbh->errstr if $dbh->err;
 
@@ -2111,6 +1939,7 @@ sub bank_credit_parent_list
 
 	return $ar;
 }
+
 
 sub warn_log
 {
@@ -2132,7 +1961,7 @@ sub warn_log
 	) or die $dbh->errstr;
 }
 
-=pod
+
 sub item_payments
 {
 	use Data::Dumper;
@@ -2436,326 +2265,6 @@ sub item_payments
 
 	return $calc;
 }
-=cut
-
-
-sub item_payments
-{
-	use Data::Dumper;
-	no warnings 'redefine';
-	local $Data::Dumper::Useqq = 1;
-
-	local *Data::Dumper::qquote = sub {
-		my $s = shift;
-		return "'$s'";
-	};
-
-	my $this = shift;
-	my $arg=ref($_[0]) eq 'HASH' ? $_[0] : {@_};
-
-	return {} unless $arg->{'uid'};
-
-	my $where='';
-	$where.= $arg->{'initial'}
-		? sprintf(' AND R.payment_from<=%1$u AND (R.payment_to>%1$u OR R.payment_to=0)',$arg->{'initial'})
-		: ' AND R.payment_from=0';
-
-	# запрашиваем ставки для заданного кредита
-	my $q = sprintf(<<'	__Q__', $this->{'profile'}, $arg->{'uid'}, $arg->{'currency'},$arg->{'city_uid'},$arg->{'sum'}, $arg->{'period'}, $where);
-		SELECT
-			R.*,
-			A.`pricing_model`
-		FROM
-			`%s_Rate` AS R
-			INNER JOIN `%1$s` AS A ON(A.`uid`=R.`credit_uid`)
-		WHERE
-			R.`credit_uid`=%u
-			&& R.`currency`=%u
-			&& R.`city_uid` IN(0,%u)
-			&& R.credit_from<=%u AND (R.credit_to>%5$u OR R.credit_to=0)
-			&& R.time_from<=%u   AND (R.time_to>=%6$u  OR R.time_to=0)
-			%s
-		ORDER BY
-			R.`city_uid` DESC, R.`seq` ASC
-	__Q__
-
-	my %attr=(Slice=>{});
-	my $ar=$dbh->selectall_arrayref($q, \%attr);
-	die $dbh->errstr if $dbh->err;
-
-	return {} unless @$ar;
-
-	# проверяем наличие ставок для текущего города
-	my @rate = grep { $_->{'city_uid'} != 0 } @$ar;
-	@rate = @$ar unless @rate;
-
-	# Получаем значения для переменных процентных ставок
-	my $var=$this->rate_var_value();
-
-	my @a;
-	my %tmp;
-
-#use Data::Dumper;
-#print '<pre>',Dumper(\$arg),'</pre>';		
-	
-	foreach my $hr (@rate)
-	{
-		# коррекция ставки с учетом переменной ставки
-		# для каждого варианта выбираем подходящее под заданные условиям значение ставки, помещаем в _rate
-
-		$hr->{'_rate'}=$arg->{'ndfl'} ? $hr->{'rate2'} : $hr->{'rate1'};
-		my $rate_var=$arg->{'ndfl'} ? $hr->{'rate2_var'} : $hr->{'rate1_var'};
-
-		##############КОСТЫЛЬ почему-то не определял ставку, пример /private/53146
-		$hr->{'_rate'} = $hr->{'rate2'} unless $hr->{'_rate'};
-		$rate_var = $hr->{'rate2_var'} unless $rate_var;
-		##################################################
-		
-		if ($rate_var) # если ставка переменная, добавляем к _rate сегодняшнее значение переменного коэффициента
-		{
-			die 'Undefined rate_var_value' unless exists $var->{$rate_var};
-			$hr->{'_rate'}+=$var->{$rate_var};
-		}
-
-		# Перестраиваем данные. Группируем варианты если есть плавающая ставка.
-		# Фильтруем если задана максимальная ставка.
-		$hr->{'float_mon'}==0
-			? push @a,[ $hr ] # нет плавающей ставки (массив состоит только из одного варианта)
-			: push @{$tmp{join(',', $hr->{'city_uid'}, $hr->{'currency'}, $hr->{'credit_from'}, $hr->{'credit_to'}, $hr->{'payment_from'}, $hr->{'payment_to'}, $hr->{'time_from'}, $hr->{'time_to'})}}, $hr;
-
-	}
-
-	# неправильно заполнены данные, если ставка плавающая поле "Ставка действует с"
-	# должено начинаться с 1.
-	# если ставка годовая, то, возможно данные в поле
-	# "Взнос от (% ≤ ПВ)" и/или "Взнос до (ПВ < %)" указаны неверно
-	if(scalar @a > 1)
-	{
-		warn_log(1,$arg->{'uid'},\@rate,$arg,\@a);
-		@a = @a[0];
-	}
-
-	foreach my $ar (values(%tmp)) # если есть плавающая ставка, собираем все варианты описывающие ее в один массив
-	{
-		# сортируем по полю "Ставка действует с"
-		my @b=sort { $a->{'float_mon'} <=> $b->{'float_mon'} } @$ar;
-
-		# поиск ошибок оператора при заполнении плавающей ставки
-		# если поле "Ставка действует с" фигурирует больше одного раза - оператор ошибся
-
-		my $prev_float_mon=-1;
-		foreach my $hr (@b)
-		{
-			if ($prev_float_mon==$hr->{'float_mon'}) # учитывая что данные отсортированы
-			{
-				#warn "Moneyzzz credit data error #2 (credit_uid:$credit_uid) - skip credit";
-				warn_log(2,$arg->{'uid'},\@rate,$arg,\@b);
-				return {};
-			}
-			$prev_float_mon=$hr->{'float_mon'};
-		}
-
-		# ошибка не найдена - записываем
-		push @a,\@b;
-	}
-
-	my @var = (); #конечный массив ставок
-	# заполняем значения по новой. В сгруппированные по плавающей ставке,
-	# фильтрованные по максимальной ставке (если нужно),
-	# и выбрасываем значение если ставка == 0 (например, если банк не выдает кредита без подтверждения дохода)
-
-	foreach my $ar (@a)
-	{
-		# рассчитываем максимальную и минимальную процентную ставку для варианта
-
-		my $min_rate = my $max_rate = $ar->[0]->{'_rate'};
-
-		for (my $i=1; $i<=$#{$ar}; $i++)
-		{
-			my $_rate=$ar->[$i]->{'_rate'};
-			$min_rate=$_rate if $min_rate > $_rate;
-			$max_rate=$_rate if $max_rate < $_rate;
-		}
-
-		next if $min_rate==0; # выбрасываем т.к. ставка не может == 0 (например, банк не выдает кредита без подтверждения дохода)
-
-		#решили отказаться т.к. может откинуть хороший вариант
-		#next if exists $arg->{'max_rate'} && $max_rate > $arg->{'max_rate'}; # максимальная ставка задана - фильтруем
-
-
-		# вариант подходит под условия - сохраняем его
-
-		push @var,{
-			'data'=>$ar,
-			'min_rate'=>$min_rate,
-			'max_rate'=>$max_rate
-		};
-	}
-
-
-#use Data::Dumper;
-#print '<pre>',Dumper(\@a),'</pre>';	
-	
-	return {} unless @var;
-
-	my %calc_arg=( # аргументы для функции расчета графика платежей
-		'сумма'   => $arg->{'sum'},
-		'месяцы'  => $arg->{'period'},
-		'проценты'=> undef
-	);
-
-	if(scalar(@var) > 1)
-	{
-		$calc_arg{'проценты'}={};
-		foreach my $var (@var)
-		{
-			$calc_arg{'проценты'}->{$_->{'float_mon'}}=$_->{'_rate'}/100 foreach @{$var->{'data'}};
-		}
-	}
-	else
-	{
-		my $var = $var[0];
-		if (scalar(@{$var->{'data'}})==1)
-		{
-			$calc_arg{'проценты'}=$var->{'data'}->[0]->{'_rate'}/100;
-		}
-		else
-		{
-			$calc_arg{'проценты'}={};
-			$calc_arg{'проценты'}->{$_->{'float_mon'}}=$_->{'_rate'}/100 foreach @{$var->{'data'}};
-		}
-	}
-
-	# учет первоначального взноса
-	$calc_arg{'сумма'} = $calc_arg{'сумма'} - $calc_arg{'сумма'}*$arg->{'initial'}/10000 if $arg->{'initial'};
-
-	# расчет графика платежей
-
-	my $calc=($arg->{'pricing_model'}==2)
-		? _differentiated_payment(\%calc_arg) # дифференцированный платеж
-		: _annuity_payment(\%calc_arg);  # Аннуитетный платеж или Любой
-
-	$calc->{'сумма_кредита'} = $calc_arg{'сумма'};
-	
-	#выборка комиссий
-	{
-		use Basic qw(trim);
-
-		my $sth = $dbh->prepare(<<'		__Q__') or die $dbh->errstr;
-			SELECT
-				A.*
-			FROM
-				`Credit2_Commission` A
-			WHERE
-				A.`credit_uid`=?
-				&& A.`city_uid` IN(0,?)
-				&& A.`currency`=?
-			ORDER BY A.`seq`
-		__Q__
-		$sth->execute($arg->{'uid'}, $arg->{'city_uid'}, $arg->{'currency'}) or die $dbh->errstr;
-		my $ar = $sth->fetchall_arrayref({});
-		$sth->finish;
-
-		last unless @$ar;
-
-		# выборка комиссий по городу
-		my %tmp;
-		for(@$ar)
-		{
-			$tmp{$_->{'city_uid'}} = [] unless exists $tmp{$_->{'city_uid'}};
-			push @{$tmp{$_->{'city_uid'}}}, $_;
-		}
-
-		my @comm = (!exists $tmp{$arg->{'city_uid'}})
-			? @{$tmp{'0'}}
-			: @{$tmp{$arg->{'city_uid'}}};
-
-		# группировка ставок комиссий по комиссиям
-		%tmp = ();
-		foreach my $hr (@comm)
-		{
-			my $key = sprintf('%s-%u',lc(trim($hr->{'name'})),$hr->{'periodicity'});
-			$tmp{$key} = [] unless exists $tmp{$key};
-			push @{$tmp{$key}}, $hr;
-		}
-
-		# из каждой группы оставляем только одну запись (наиболее подходящий = с максимальными значениями: "сумма кредита от", "первоначальный взнос от", "срок кредита от")
-		my @filtered = ();
-		foreach my $gr (values %tmp)
-		{
-			my @sorted=sort { $b->{'amount_credit'} <=> $a->{'amount_credit'} || $b->{'first_percent_from'} <=> $a->{'first_percent_from'} || $b->{'period'} <=> $a->{'period'} } @$gr;
-			push @filtered, $sorted[0];
-		}
-
-		#добавление ставок к платежам
-		my $sum = 0;
-		foreach my $hr (@filtered)
-		{
-			my $payment=$hr->{'amount'}; # размер платежа
-
-			if ($payment==0) # размер платежа явно не указан
-			{
-				$payment=$arg->{'sum'}*$hr->{'percent'}/10000; # рассчитываем проценты от суммы кредита
-				$payment=$hr->{'but_min'} if $hr->{'but_min'}!=0 && $payment < $hr->{'but_min'}; # но не менее
-				$payment=$hr->{'but_max'} if $hr->{'but_max'}!=0 && $payment > $hr->{'but_max'}; # но не более
-			}
-
-			unless ($payment) # неверно указан размер комиссии
-			{
-				local $Data::Dumper::Indent=0;
-				local $Data::Dumper::Purity=1;
-				local $Data::Dumper::Useqq = 1;
-				no warnings 'redefine';
-
-				local *Data::Dumper::qquote = sub {
-					my $s = shift;
-					return "'$s'";
-				};
-
-				warn "Comission payment = 0; ",Dumper($hr);
-				next;
-			}
-
-			if ($hr->{'periodicity'}==0) # разовый платеж
-			{
-				unless($calc->{'график_платежей'}->[0]->{'месяц'} == 0)
-				{
-					unshift @{$calc->{'график_платежей'}}, {
-						'месяц' => 0,
-						'долг_на_начало_месяца' => $arg->{'sum'},
-						'долг_на_конец_месяца'  => $arg->{'sum'},
-						'выплата_процентов'     => 0,
-						'выплата_долга'         => 0,
-						'доп_расходы'           => 0
-					};
-					#$calc->{'график_платежей'}->[0]->{'доп_расходы'} = 0;
-				}
-
-				$calc->{'график_платежей'}->[0]->{'доп_расходы'} += $payment;
-				$sum += $payment;
-			}
-			else # ежемесячный платеж
-			{
-				foreach my $phr (@{$calc->{'график_платежей'}})
-				{
-					next if $phr->{'месяц'} == 0;
-					$phr->{'доп_расходы'} = 0 unless exists $phr->{'доп_расходы'};
-					$phr->{'доп_расходы'} += $payment;
-					$sum += $payment;
-				}
-			}
-		}
-
-		if($sum)
-		{
-			$calc->{'сумма_комиссий'} = $sum;
-			$calc->{'сумма_всех_выплат'} += $sum;
-		}
-	}
-
-	return $calc;
-}
-
 
 
 sub credit_city_uid_list
