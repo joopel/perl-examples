@@ -1,0 +1,99 @@
+<?
+
+require DBL1;
+require 'libsqlfile.pl';
+require 'lib1.ru.pl';
+require comvars;
+
+$GLOBALS{'comvars'}=comvars::load('001');
+
+
+$HTTP_GET_VARS{'c'}+=0;
+$HTTP_GET_VARS{'p'}+=0;
+
+
+my $rc = defined(my $node_path = DBL1::node_path(
+	{
+		 'role_id'      => DBL1::role_id($ENV{'REMOTE_USER'})
+		,'node_id'      => $HTTP_GET_VARS{'c'}
+		,'root_node_id' => 0
+	}
+));
+
+unless ($rc && $node_path->[ 0 ]->{'node_type'}==2)
+{
+	$ENV{'REDIRECT_STATUS'}=410;
+	include_tmpl($ENV{'DOCUMENT_ROOT'}.'/a0/ru/HTTP_ERROR_HANDLER.thtml');
+	return 0;
+}
+
+unless (defined $node_path->[0]->{'node_access_level'})
+{
+	$ENV{'REDIRECT_STATUS'}=402;
+	include_tmpl($ENV{'DOCUMENT_ROOT'}.'/a0/ru/HTTP_ERROR_HANDLER.thtml');
+	return 0;
+}
+
+
+$GLOBALS{'nav_path'}=[];
+
+foreach my $hr (reverse @{$node_path})
+{
+	push @{$GLOBALS{'nav_path'}}, {
+		'NODE_TITLE' => $hr->{'node_title'},
+		'NODE_TYPE'  => $hr->{'node_type'},
+		'NODE_ID'    => $hr->{'node_id'}
+	};
+}
+
+shift @{$GLOBALS{'nav_path'}};
+
+$GLOBALS{'node'} = $node_path->[0];
+
+
+if ($ENV{'QUERY_STRING'}=~m/\Ac=\d+&p=\d+\z/)
+{
+	$API{'max_age'}=0;
+	$API{'refresh_interval'}=86400 - ((time()+timezone(time())) % 86400);
+}
+
+?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<? include_tmpl($ENV{'HTINCL_ROOT'}.'/a0/ru/htmlhead.thtml'); ?>
+</head>
+<body>
+
+<!-- ============== MAIN ============================================================== -->
+<div class="main" id="main">
+<!-- ~~~~~~~~~~~~~~ HEADER ~~~~~~~~~~~~~~~~~~~~~~~ -->
+<? include_tmpl($ENV{'HTINCL_ROOT'}.'/a0/ru/header.thtml'); ?>
+<!-- ~~~~~~~~~~~~~~ HEADER ~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+
+
+<!-- ~~~~~~~~~~~~~~ CONTENT ~~~~~~~~~~~~~~~~~~~~~~~ -->
+<div class="content">
+	<? include_tmpl(sprintf('%s/a0/ru/top_banner.thtml',$ENV{'HTINCL_ROOT'})); ?>
+
+	<div class="colColumn1">
+<!-- +++++++++++++++++++++++ Template ++++++++++++++++++++++++++ -->
+	<? include_tmpl(sprintf('%s/a0/ru/profile/%s/list.thtml', $ENV{'HTINCL_ROOT'}, $GLOBALS{'node'}->{'profile_id'})); ?>
+<!-- +++++++++++++++++++++++ Template ++++++++++++++++++++++++++ -->
+	</div>
+
+	<? include_tmpl(sprintf('%s/a0/ru/sitebar.thtml',$ENV{'HTINCL_ROOT'})); ?>
+	<div class="fl"></div>
+</div>
+<!-- ~~~~~~~~~~~~~~ CONTENT ~~~~~~~~~~~~~~~~~~~~~~~ -->
+</div>
+
+<!-- ============== MAIN ============================================================== -->
+
+<!-- ~~~~~~~~~~~~~~ FOOTER ~~~~~~~~~~~~~~~~~~~~~~~ -->
+<? include_tmpl($ENV{'HTINCL_ROOT'}.'/a0/ru/footer.thtml'); ?>
+<!-- ~~~~~~~~~~~~~~ FOOTER ~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+</body>
+</html>

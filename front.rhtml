@@ -1,0 +1,76 @@
+<?
+# Страница кредитов
+
+use View;
+do 'init.pl' or return 0;
+
+my $credits_types = [2478,7209,2477,2465];
+my $list = $HEAP{'view'}->obj('Node')->list('uid_list' => $credits_types);
+
+$HEAP{'page_id'} = 'credit_front'; 
+
+# Хлебные крошки
+$HEAP{'main_href'} = $HEAP{'view'}->obj('Credit2')->get_main_breadcrumb();
+push @{$HEAP{'breadcrumb'}}, $HEAP{'main_href'};
+
+$HEAP{'view'}->obj('Var')->seo_assign(
+	'url'         => sprintf('seo_%s_%s',$HEAP{'city'}->{'url'},$HEAP{'page_id'}),
+	'replacement' => {
+		'city_gen' => $HEAP{'city'}->{'title3'},
+		'city_prep'=> $HEAP{'city'}->{'title2'}
+	}
+);
+
+# для каждого типа кредитов добавляем цели
+$HEAP{'list'} = [];
+foreach my $types (@$list)
+{
+  my $temp = {};
+  $temp->{'type'} = $types;
+
+  my $type_uids = [$types->{'uid'}];
+  my $profiles = [$types->{'child_default_profile'}];
+
+  # если кредит потребительский добавить образовательный
+  if ($types->{'uid'} ==  2477)
+  {
+     my $edu_credit = $HEAP{'view'}->obj('Node')->item('uid' => 2475);
+     
+     push @$type_uids,$edu_credit->{'uid'};
+     push @$profiles,$edu_credit->{'child_default_profile'};
+  }
+  
+  push @{$HEAP{'credit_profiles'}},@$profiles;
+  
+  my $purpose = $HEAP{'view'}->obj('Credit2')->purpose('profiles' => \@$profiles);
+  my $purpose2 = $HEAP{'view'}->obj('Credit2')->purpose2('profiles' => \@$profiles);
+  
+  $temp->{'purpose'} = $purpose;
+  $temp->{'purpose2'} = $purpose2;
+  $temp->{'type_uids'} = $type_uids;
+
+  push @{$HEAP{'list'}},$temp;
+}
+
+# количество кредитов
+$HEAP{'credits_cnt'} = $HEAP{'view'}->base_model->obj('Credit2')->credit_count('types'=>1,'city_uid'=>$HEAP{'city'}->{'uid'});
+
+$HEAP{'content'}=sprintf('%s/public/credit/front.rhtml',$ENV{'INCL_ROOT'});
+
+# подключаем банки
+$HEAP{'popup_require'}->{'bank'} = 1;
+
+push @$credits_types,2475;
+$HEAP{'bank_filter_list'} = $HEAP{'view'}->obj('Bank')->list(
+  'city_uid'      => $HEAP{'city'}->{'uid'},
+  'is_hidden'     => 0,
+  'order'         => 'title',
+  'no_select'     => 'file_ab',
+  'credits_types' => $credits_types       
+);
+    
+@{$HEAP{'bank_filter_list'}} = grep {$_->{'credits_count'} != 0 } @{$HEAP{'bank_filter_list'}};	    	
+
+include_tmpl(sprintf('%s/public/basic-sidebar.rhtml',$ENV{'INCL_ROOT'}));
+return;
+?>

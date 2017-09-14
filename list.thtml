@@ -1,0 +1,92 @@
+<div class="pageTitle"><h1><? printf htmlspecialchars($GLOBALS{node}->{node_title}); ?></h1></div>
+<? printf('<div class="noPrint size12">[&nbsp;<a href="/%u/0/add/">добавить</a>&nbsp;]</div>',$GLOBALS{node}->{node_id}) if $GLOBALS{IS_AUTHORIZED}; ?>
+
+<?
+
+my $dbh=DBL1::db_handle();
+
+my $limit=$GLOBALS{'comvars'}->{'limit'};
+my $pos=0+$HTTP_GET_VARS{'p'};
+my $num_recs=$GLOBALS{'node'}->{'node_length_a1'};
+
+{
+	unless ($num_recs)
+	{
+		print '<p>Список пуст.</p>';
+		last;
+	}
+
+
+	my $sth=$dbh->prepare(sprintf(<<'_QUERY_',$GLOBALS{'node'}->{'node_id'},$pos,$limit)) or die($dbh->errstr);
+SELECT
+	A.i_id,
+	A.timestamp,
+	B.title,
+	B.file_a,
+	T.thread_length_a1
+FROM
+	Ru_T1_A AS A
+	LEFT JOIN Ru_T1_B AS B ON (A.r_id=B.r_id)
+	LEFT JOIN Ru_Thread AS T ON (T.i_id=A.i_id)
+WHERE
+	A.node_id = %u
+	AND A.set_b1 <= 1
+ORDER BY
+	 A.timestamp DESC
+LIMIT
+	%u,%u
+_QUERY_
+
+	$sth->execute or die($dbh->errstr);
+
+	$sth->rows or last;
+
+	my $tmpl=<<'_EOL_';
+	<div class="blockItem">
+		%s
+		<div class="blockTitle size14 nonLine"><a href="/%u-0/" title="%s">%s</a></div>
+		<div class="blockContent size12 allLinkColor1">
+			<div class="newsItemMeta"><span class="allColor1">%s </span><a title="комментарии" href="/%u-0/#t"><img class="icoComments" alt="комментарии" src="/a0/ru/images/icoComments3.gif"/></a><a title="комментарии" href="/%u-0/#t">%s</a></div>
+		</div>
+	</div>
+_EOL_
+
+?>
+<div class="dayNews allBg1">
+<?
+	while (my $hr=$sth->fetchrow_hashref)
+	{
+		unpacksqlfile2(\$hr->{'file_a'}, $hr);
+
+		imagefix($hr);
+
+		printf($tmpl
+			,($hr->{'img_crop_output_url'} ne ''
+				? sprintf('<div class="blockPhoto"><a href="/%u-0/" title="%s"><img src="%s" alt="%s" /></a></div>'
+					,$hr->{'i_id'}
+					,htmlspecialchars($hr->{'title'})
+					,htmlspecialchars($hr->{'img_crop_output_url'})
+					,htmlspecialchars($hr->{'img_title'})
+				  )
+				: ''
+			 )
+			,$hr->{'i_id'}
+			,htmlspecialchars($hr->{'title'})
+			,htmlspecialchars($hr->{'title'})
+			,time2hrstr($hr->{'timestamp'},1)
+			,$hr->{'i_id'}
+			,$hr->{'i_id'}
+			,hr_thread_length($hr->{'thread_length_a1'})
+		);
+	}
+
+?>
+</div>
+
+<? pages_list2("/$HTTP_GET_VARS{'c'}/%u/",$num_recs,$pos,$limit,4);  ?>
+
+<?
+
+}
+
+?>

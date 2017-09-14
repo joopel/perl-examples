@@ -1,0 +1,156 @@
+<?
+
+use Ru;
+
+my %t = (
+	'credit_sep' => '<br/>',
+	'nobr'       => '<nobr>%s</nobr>',
+	'p'          => '<p>%s</p>',
+	'purp_sep'   => ', ',
+	'bank_img'   => '<td class="bank_logo hidden-xs"><a href="%s/"><img src="%s" alt="%s" /></a><img width="84" height="16" style="background-position: -%spx 0px;" class="stars-rating" src="http://st.incred.ru/bitrix/templates/style/images/5stars.png" alt="" /></td>'
+);
+
+$t{'row'} = <<'_EOL_';
+	<div class="panel panel-border show-credit">
+		<div class="panel-body">
+			<div class="table-responsive">
+			<table class="w100p table">
+			<tr>
+			<td>
+			<a class="h3" href="%s/">%s</a> <span class="ot_name">от <a href="%s/">%s</a></span>
+			%s
+			%s
+			</td>
+			%s
+			</tr>
+			</table>
+			</div>
+		</div>
+	</div>
+_EOL_
+
+my @bank_uid = map { $_->{'bank_uid'} } @{$HEAP{'credit_list'}};
+my %banks = map { $_->{'uid'} => $_ } @{ $HEAP{'view'}->obj('Bank')->list('uid_list'=>\@bank_uid, 'is_hidden'=>0, 'no_select'=>'file_b', 'addon'=>'rating_city', 'city_uid' => $HEAP{'city'}->{'uid'} ) };
+
+?>
+<?	include_tmpl(sprintf('%s/public/credit/search_form.rhtml',$ENV{'INCL_ROOT'})); ?>
+<?	include_tmpl(sprintf('%s/public/credit/submenu.rhtml',$ENV{'INCL_ROOT'})); ?>
+
+<?
+	my $i=0;
+
+my $tmpl_str = <<'_EOL_';
+<tr>
+	<td>
+		%s
+	</td>
+	<td>
+		%s
+	</td>
+	<td>
+		%s
+	</td>	
+</tr>
+_EOL_
+	
+#	use Data::Dumper;
+#	print '<pre>',Dumper($HEAP{'credit_list'}),'</pre>';
+	my $row;
+	
+	foreach my $hr (@{$HEAP{'credit_list'}})
+	{
+		next unless $banks{$hr->{'bank_uid'}};
+
+		###MY
+		my $summa_str;
+		my $html;
+		my $count;
+
+		if (scalar(@{$hr->{'summary'}})) {
+			$html = sprintf('<table class="table table-striped table-condensed table-hover"><thead><tr><th class="per30">сумма %s</th><th class="per30">ставка</th><th class="per20">период</th></tr></thead><tbody>',$HEAP{'label'}->{'uid'}==7209 ? 'лимита' : 'кредита');
+			foreach my $line (@{$hr->{'summary'}})
+			{
+				$summa_str = $line->{'сумма'} unless $count;
+				
+				$html.=sprintf($tmpl_str
+					#,($count % 2 == 0) ? 'class="odd"' : ''
+					#,$line->{'валюта2'}
+					,$line->{'сумма'}				
+					,$line->{'ставка2'}
+					,$hr->{'срок'} #$line->{'срок'}
+				);
+				
+				$count++;
+			}
+			$html .= '</tbody></table>';
+		}
+		#####
+		
+		my @l = ();
+		push @l, sprintf $t{'nobr'}, $hr->{'summary'}->[0]->{'сумма2'} if $hr->{'summary'}->[0]->{'сумма2'};
+		push @l, sprintf $t{'nobr'}, $hr->{'срок'} if $hr->{'срок'};
+		push @l, sprintf $t{'nobr'}, $hr->{'summary'}->[0]->{'ставка2'} if $hr->{'summary'}->[0]->{'ставка2'};
+		
+		my $pos = (5 - Basic::ceil($banks{$hr->{'bank_uid'}}->{'city_rating'}))*17;
+
+
+		if ($row==1 || $row==4 || $row==7)
+		{
+			my $section = sprintf('%s/private/incl/public/direct_14.ihtml', $ENV{'FILES_ROOT'});	
+	#		last unless -e $section && -f_ && -s _ > 3;
+			print '<div>';
+			include_file($section);	
+			print '</div>';
+			$row++;
+		}
+
+		
+		printf(
+			$t{'row'},
+			$hr->{'href'},
+			$hr->{'title'},
+
+			$banks{$hr->{'bank_uid'}}->{'href'},
+			$banks{$hr->{'bank_uid'}}->{'title'},	
+			$html,
+			(
+				$hr->{'predostavlaetsya'}
+				? sprintf('<div class="credit_for">%s</div>',  $hr->{'predostavlaetsya'})
+				: $hr->{'специальные_предложения'} ? sprintf('<div class="credit_for">%s</div>',  $hr->{'специальные_предложения'}) : ''
+			),
+			(
+				($banks{$hr->{'bank_uid'}}->{'img_logo_src'})
+				? sprintf($t{'bank_img'},$banks{$hr->{'bank_uid'}}->{'href'}, $banks{$hr->{'bank_uid'}}->{'img_logo_src'}, $banks{$hr->{'bank_uid'}}->{'title'},$pos)
+				: ''
+			),			
+#			Ru::stars($banks{$hr->{'bank_uid'}}->{'city_rating'}),
+
+
+		);
+		
+		$row++;	
+	}
+?>
+
+<? 
+my $tmpl_page_nav = <<'_EOL_';
+                  %s
+_EOL_
+
+my $page_nav = $HEAP{'page_nav'};
+
+printf $tmpl_page_nav,$page_nav;
+
+?>
+
+<? 
+
+if ($HEAP{'seo_text_html'} && !$GET{'p'}) { ?>
+<div class="default">
+<? print $HEAP{'seo_text_html'}; ?>
+</div>
+<? 
+}
+
+?>					
+
